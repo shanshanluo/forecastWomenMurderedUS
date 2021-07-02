@@ -1,0 +1,98 @@
+---
+title: "ForecastingWomenMurdered"
+author: "Shanshan"
+date: "2/23/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+if(!require("pacman")) install.packages("pacman")
+pacman::p_load(dplyr, ggplot2, tidyverse, tsibble, feasts, fpp2, fable)
+search()
+theme_set(theme_classic())
+```
+
+```{r dataInput}
+str(wmurders)
+wm <- as_tsibble(wmurders)
+str(wm)
+```
+## Q1. Plot the original time series. The time plot shows the series wanders up and down for long periods. It clearly is non-stationary. Consequently, a first difference of the series value will be checked. 
+```{r plotTimeSeries}
+autoplot(wm, value) +
+  labs(title="Women Murdered Each Year in US",
+       y="Number of Women murdered US, x100,000")
+# Components of tsibble object wm 
+cmp <- wm %>%
+  model(STL(value))
+components(cmp) %>% autoplot()
+# features
+wm %>% features(value, feat_acf)
+ggplot(wm) +
+  geom_histogram(aes(x=value), bins=10) +
+  labs(title="Distribution of original series")
+```
+
+## The differenced data are shown below. Plots indicate that first difference of original series looks stationary. So we'll use the first differenced series to fit model. The PACF has highest spike over threshold in lag2 indicating a AR(2) model. So ARIMA(2,1,0) is considered. ACF has highest spike also in lag2 indicating a MA(2) model. A model of ARIMA(0,1,2) is considered. 
+
+## Q2. From plots shown below, first difference of the original series is stationary with approximately 0 mean. So we don't expect a constant term included in the model.
+```{r diff1Series}
+wm$value %>% diff() %>% ggtsdisplay()
+
+# plot distribution of the series and 1-diff of the series
+wm <- wm %>% mutate(diff1=difference(value))
+ggplot(wm) +
+  geom_histogram(aes(x=diff1), bins=10) +
+  labs(title="Distribution of 1-diff")
+```
+
+## Q3. Fit model ARIMA(0,1,2) and ARIMA(2,1,0). ARIMA(0,1,2) gives the lowest AIC and AICc. So ARIMA(0,1,2) is selected. Based on the residual plots for the model ARIMA(0,1,2). Residual distribution is close to normal with mean 0. ACF shows that all autocorrelations are within the threshold limits. Therefore, the residuals are behaving like white noise. The selected ARIMA(0,1,2) model is satisfactory.
+```{r fitARIMAModel_diff1}
+## PACF indicates a ARIMA(2,1,0), ACF indicates a ARIMA(0,1,2)
+set.seed(42)
+fits_manu <- wm %>%
+  model(
+    arima012 = ARIMA(value ~ pdq(0, 1, 2)),
+    arima210 = ARIMA(value ~ pdq(2, 1, 0)),
+    )
+report(fits_manu)
+# The full search found the model ARIMA(0,1,2) has the lowest AICc, which is same as our manual selection
+glance(fits_manu) %>% arrange(AICc)
+
+fits_manu %>%
+  select(arima012) %>%
+  gg_tsresiduals()
+```
+
+## Q4. Forecast 3 times ahead with the selected ARIMA(0,1,2) model.Forecast plot with prediction intervals is shown below.
+```{r forcastWithfittedModel}
+fcast<- forecast(fits_manu, h=3)
+df <- as.data.frame(fcast)
+df
+
+fcast %>% autoplot(wm) +
+  labs(title="Forecast for Number of Women Murdered in Year 2005, 2006, 2007",
+       y="Number of Women murdered US, x100,000")
+```
+
+## Q5. Calling ARIMA() running auto model selection gives us a different model than the manually selected one. This model is an ARIMA(0,2,3) having AICc value equals -6.7. IT is greater than that from our manually selected model ARIMA(0,1,2) which is -12.95. Therefore, the manually selected model AR(0,1,2) is better.
+```{r fitAutoARIMAModel}
+set.seed(42)
+fits_auto <- wm %>%
+  model(
+    stepwise = ARIMA(value),
+    full = ARIMA(value, stepwise=FALSE),
+    )
+
+glance(fits_auto) %>% arrange(AICc)
+report(fits_auto %>% select(full))
+
+fits_auto %>%
+  select(full) %>%
+  gg_tsresiduals()
+```
+
+
+
